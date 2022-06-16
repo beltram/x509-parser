@@ -64,6 +64,15 @@ jobs:
           command: test
           args: --all-features
 
+  test-wasm:
+    name: Test Suite
+    needs: check-all-features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: jetli/wasm-pack-action@v0.3.0
+      - run: wasm-pack test --headless --chrome
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest

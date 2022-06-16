@@ -1,9 +1,7 @@
 use crate::cri_attributes::*;
 use crate::error::{X509Error, X509Result};
 use crate::extensions::*;
-use crate::x509::{
-    parse_signature_value, AlgorithmIdentifier, SubjectPublicKeyInfo, X509Name, X509Version,
-};
+use crate::x509::{parse_signature_value, AlgorithmIdentifier, SubjectPublicKeyInfo, X509Name, X509Version};
 
 use asn1_rs::FromDer;
 use der_parser::ber::BitStringObject;
@@ -13,6 +11,8 @@ use der_parser::*;
 use nom::Offset;
 #[cfg(feature = "verify")]
 use oid_registry::*;
+#[cfg(feature = "verify")]
+use ring::signature::VerificationAlgorithm;
 use std::collections::HashMap;
 
 /// Certification Signing Request (CSR)
@@ -25,15 +25,13 @@ pub struct X509CertificationRequest<'a> {
 
 impl<'a> X509CertificationRequest<'a> {
     pub fn requested_extensions(&self) -> Option<impl Iterator<Item = &ParsedExtension>> {
-        self.certification_request_info
-            .iter_attributes()
-            .find_map(|attr| {
-                if let ParsedCriAttribute::ExtensionRequest(requested) = &attr.parsed_attribute {
-                    Some(requested.extensions.iter().map(|ext| &ext.parsed_extension))
-                } else {
-                    None
-                }
-            })
+        self.certification_request_info.iter_attributes().find_map(|attr| {
+            if let ParsedCriAttribute::ExtensionRequest(requested) = &attr.parsed_attribute {
+                Some(requested.extensions.iter().map(|ext| &ext.parsed_extension))
+            } else {
+                None
+            }
+        })
     }
 
     /// Verify the cryptographic signature of this certification request
@@ -46,24 +44,65 @@ impl<'a> X509CertificationRequest<'a> {
         let spki = &self.certification_request_info.subject_pki;
         let signature_alg = &self.signature_algorithm.algorithm;
         // identify verification algorithm
-        let verification_alg: &dyn signature::VerificationAlgorithm =
-            if *signature_alg == OID_PKCS1_SHA1WITHRSA {
+        let verification_alg: &dyn VerificationAlgorithm = if *signature_alg == OID_PKCS1_SHA1WITHRSA {
+            #[cfg(not(target_family = "wasm"))]
+            {
                 &signature::RSA_PKCS1_1024_8192_SHA1_FOR_LEGACY_USE_ONLY
-            } else if *signature_alg == OID_PKCS1_SHA256WITHRSA {
-                &signature::RSA_PKCS1_2048_8192_SHA256
-            } else if *signature_alg == OID_PKCS1_SHA384WITHRSA {
-                &signature::RSA_PKCS1_2048_8192_SHA384
-            } else if *signature_alg == OID_PKCS1_SHA512WITHRSA {
-                &signature::RSA_PKCS1_2048_8192_SHA512
-            } else if *signature_alg == OID_SIG_ECDSA_WITH_SHA256 {
-                &signature::ECDSA_P256_SHA256_ASN1
-            } else if *signature_alg == OID_SIG_ECDSA_WITH_SHA384 {
-                &signature::ECDSA_P384_SHA384_ASN1
-            } else if *signature_alg == OID_SIG_ED25519 {
-                &signature::ED25519
-            } else {
+            }
+            #[cfg(target_family = "wasm")]
+            {
                 return Err(X509Error::SignatureUnsupportedAlgorithm);
-            };
+            }
+        } else if *signature_alg == OID_PKCS1_SHA256WITHRSA {
+            #[cfg(not(target_family = "wasm"))]
+            {
+                &signature::RSA_PKCS1_2048_8192_SHA256
+            }
+            #[cfg(target_family = "wasm")]
+            {
+                return Err(X509Error::SignatureUnsupportedAlgorithm);
+            }
+        } else if *signature_alg == OID_PKCS1_SHA384WITHRSA {
+            #[cfg(not(target_family = "wasm"))]
+            {
+                &signature::RSA_PKCS1_2048_8192_SHA384
+            }
+            #[cfg(target_family = "wasm")]
+            {
+                return Err(X509Error::SignatureUnsupportedAlgorithm);
+            }
+        } else if *signature_alg == OID_PKCS1_SHA512WITHRSA {
+            #[cfg(not(target_family = "wasm"))]
+            {
+                &signature::RSA_PKCS1_2048_8192_SHA512
+            }
+            #[cfg(target_family = "wasm")]
+            {
+                return Err(X509Error::SignatureUnsupportedAlgorithm);
+            }
+        } else if *signature_alg == OID_SIG_ECDSA_WITH_SHA256 {
+            #[cfg(not(target_family = "wasm"))]
+            {
+                &signature::ECDSA_P256_SHA256_ASN1
+            }
+            #[cfg(target_family = "wasm")]
+            {
+                return Err(X509Error::SignatureUnsupportedAlgorithm);
+            }
+        } else if *signature_alg == OID_SIG_ECDSA_WITH_SHA384 {
+            #[cfg(not(target_family = "wasm"))]
+            {
+                &signature::ECDSA_P384_SHA384_ASN1
+            }
+            #[cfg(target_family = "wasm")]
+            {
+                return Err(X509Error::SignatureUnsupportedAlgorithm);
+            }
+        } else if *signature_alg == OID_SIG_ED25519 {
+            &signature::ED25519
+        } else {
+            return Err(X509Error::SignatureUnsupportedAlgorithm);
+        };
         // get public key
         let key = signature::UnparsedPublicKey::new(verification_alg, spki.subject_public_key.data);
         // verify signature
@@ -146,15 +185,13 @@ impl<'a> X509CertificationRequestInfo<'a> {
     ///
     /// If an extension is present twice, this will fail and return `DuplicateExtensions`.
     pub fn attributes_map(&self) -> Result<HashMap<Oid, &X509CriAttribute>, X509Error> {
-        self.attributes
-            .iter()
-            .try_fold(HashMap::new(), |mut m, ext| {
-                if m.contains_key(&ext.oid) {
-                    return Err(X509Error::DuplicateAttributes);
-                }
-                m.insert(ext.oid.clone(), ext);
-                Ok(m)
-            })
+        self.attributes.iter().try_fold(HashMap::new(), |mut m, ext| {
+            if m.contains_key(&ext.oid) {
+                return Err(X509Error::DuplicateAttributes);
+            }
+            m.insert(ext.oid.clone(), ext);
+            Ok(m)
+        })
     }
 }
 

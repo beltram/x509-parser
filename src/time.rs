@@ -6,14 +6,13 @@ use nom::branch::alt;
 use nom::combinator::{complete, map_res, opt};
 use std::fmt;
 use std::ops::{Add, Sub};
-use time::macros::format_description;
-use time::{Date, Duration, OffsetDateTime};
+use chrono::{Datelike, DateTime, NaiveDateTime, Utc};
 
 use crate::error::{X509Error, X509Result};
 
 /// An ASN.1 timestamp.
 #[derive(Copy, Clone, Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
-pub struct ASN1Time(OffsetDateTime);
+pub struct ASN1Time(pub DateTime<Utc>);
 
 impl ASN1Time {
     pub(crate) fn from_der_opt(i: &[u8]) -> X509Result<Option<Self>> {
@@ -22,25 +21,26 @@ impl ASN1Time {
     }
 
     #[inline]
-    pub const fn to_datetime(&self) -> OffsetDateTime {
+    pub const fn to_datetime(&self) -> DateTime<Utc> {
         self.0
     }
 
     /// Makes a new `ASN1Time` from the number of non-leap seconds since Epoch
     pub fn from_timestamp(secs: i64) -> Self {
-        ASN1Time(OffsetDateTime::from_unix_timestamp(secs).unwrap())
+        let dt = NaiveDateTime::from_timestamp(secs, 0);
+        Self(DateTime::from_utc(dt, Utc))
     }
 
     /// Returns the number of non-leap seconds since January 1, 1970 0:00:00 UTC (aka "UNIX timestamp").
     #[inline]
     pub fn timestamp(&self) -> i64 {
-        self.0.unix_timestamp()
+        self.0.timestamp()
     }
 
     /// Returns a `ASN1Time` which corresponds to the current date.
     #[inline]
     pub fn now() -> Self {
-        ASN1Time(OffsetDateTime::now_utc())
+        Self(Utc::now())
     }
 
     /// Returns an RFC 2822 date and time string such as `Tue, 1 Jul 2003 10:52:37 +0200`.
@@ -51,9 +51,11 @@ impl ASN1Time {
     /// For an infallible conversion to string, use `.to_string()`.
     #[inline]
     pub fn to_rfc2822(self) -> Result<String, String> {
-        self.0
-            .format(&time::format_description::well_known::Rfc2822)
-            .map_err(|e| e.to_string())
+        if self.0.year() >= 1900 {
+            Ok(self.0.to_rfc2822())
+        } else {
+            Err("Year was below 1900 which is not allowed by RFC 2822".to_string())
+        }
     }
 }
 
@@ -74,10 +76,10 @@ fn parse_choice_of_time(i: &[u8]) -> DerResult {
 // allow relaxed parsing of UTCTime (ex: 370116130016+0000)
 fn parse_malformed_date(i: &[u8]) -> DerResult {
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    // fn check_char(b: &u8) -> bool {
-    //     (0x20 <= *b && *b <= 0x7f) || (*b == b'+')
-    // }
-    let (_rem, hdr) = ber_read_element_header(i)?;
+        // fn check_char(b: &u8) -> bool {
+        //     (0x20 <= *b && *b <= 0x7f) || (*b == b'+')
+        // }
+        let (_rem, hdr) = ber_read_element_header(i)?;
     let len = hdr.length().definite()?;
     if len > MAX_OBJECT_SIZE {
         return Err(nom::Err::Error(BerError::InvalidLength));
@@ -103,11 +105,8 @@ fn parse_malformed_date(i: &[u8]) -> DerResult {
 
 impl fmt::Display for ASN1Time {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let format = format_description!("[month repr:short] [day padding:space] [hour]:[minute]:[second] [year padding:none] [offset_hour sign:mandatory]:[offset_minute]");
-        let s = self
-            .0
-            .format(format)
-            .unwrap_or_else(|e| format!("Invalid date: {}", e));
+        let format = "%b  %-d %H:%M:%S %-Y %:z";
+        let s = self.0.format(format).to_string();
         f.write_str(&s)
     }
 }
@@ -116,68 +115,75 @@ pub(crate) fn der_to_utctime(obj: DerObject) -> Result<ASN1Time, X509Error> {
     match obj.content {
         BerObjectContent::UTCTime(s) => {
             let dt = s.to_datetime().map_err(|_| X509Error::InvalidDate)?;
+            let dt = NaiveDateTime::from_timestamp(dt.unix_timestamp(), 0);
+            let dt = DateTime::from_utc(dt, Utc);
             let year = dt.year();
             // RFC 5280 rules for interpreting the year
             let year = if year >= 50 { year + 1900 } else { year + 2000 };
-            let date = Date::from_calendar_date(year, dt.month(), dt.day())
-                .map_err(|_| X509Error::InvalidDate)?;
-            let dt = dt.replace_date(date);
-
+            let dt = dt.with_year(year)
+                .ok_or(X509Error::InvalidDate)?;
             Ok(ASN1Time(dt))
         }
         BerObjectContent::GeneralizedTime(s) => {
             let dt = s.to_datetime().map_err(|_| X509Error::InvalidDate)?;
+            let dt = NaiveDateTime::from_timestamp(dt.unix_timestamp(), 0);
+            let dt = DateTime::from_utc(dt, Utc);
             Ok(ASN1Time(dt))
         }
         _ => Err(X509Error::InvalidDate),
     }
 }
 
-impl Add<Duration> for ASN1Time {
+impl Add<chrono::Duration> for ASN1Time {
     type Output = Option<ASN1Time>;
 
     #[inline]
-    fn add(self, rhs: Duration) -> Option<ASN1Time> {
-        Some(ASN1Time(self.0 + rhs))
+    fn add(self, rhs: chrono::Duration) -> Self::Output {
+        Some(Self(self.0.add(rhs)))
     }
 }
 
 impl Sub<ASN1Time> for ASN1Time {
-    type Output = Option<Duration>;
+    type Output = Option<chrono::Duration>;
 
     #[inline]
-    fn sub(self, rhs: ASN1Time) -> Option<Duration> {
+    fn sub(self, rhs: ASN1Time) -> Self::Output {
         if self.0 > rhs.0 {
-            Some(self.0 - rhs.0)
+            let this = self.0.signed_duration_since(chrono::MIN_DATETIME);
+            let rhs = rhs.0.signed_duration_since(chrono::MIN_DATETIME);
+            Some(this - rhs)
         } else {
             None
         }
     }
 }
 
-impl From<OffsetDateTime> for ASN1Time {
-    fn from(dt: OffsetDateTime) -> Self {
-        ASN1Time(dt)
+impl From<DateTime<Utc>> for ASN1Time {
+    fn from(dt: DateTime<Utc>) -> Self {
+        Self(dt)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use time::macros::datetime;
-
-    use super::ASN1Time;
+    use chrono::TimeZone;
+    use super::*;
+    use wasm_bindgen_test::*;
+    wasm_bindgen_test_configure!(run_in_browser);
 
     #[test]
+    #[wasm_bindgen_test]
     fn test_time_to_string() {
-        let d = datetime!(1 - 1 - 1 12:34:56 UTC);
+        let d = Utc.ymd(1, 1, 1).and_hms(12, 34, 56);
         let t = ASN1Time::from(d);
         assert_eq!(t.to_string(), "Jan  1 12:34:56 1 +00:00".to_string());
     }
 
     #[test]
+    #[wasm_bindgen_test]
     fn test_nonrfc2822_date() {
         // test year < 1900
-        let d = datetime!(1 - 1 - 1 00:00:00 UTC);
+        let d = Utc.ymd(1, 1, 1).and_hms(0, 0, 0);
         let t = ASN1Time::from(d);
         assert!(t.to_rfc2822().is_err());
     }

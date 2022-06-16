@@ -22,7 +22,7 @@ use nom::{Offset, Parser};
 use oid_registry::Oid;
 use oid_registry::*;
 use std::collections::HashMap;
-use time::Duration;
+use chrono::Duration;
 
 /// An X.509 v3 Certificate.
 ///
@@ -56,7 +56,7 @@ use time::Duration;
 /// # match res {
 /// #     Ok((_rem, x509)) => {
 /// #         display_x509_info(&x509);
-/// #     },
+/// #     }
 /// #     _ => panic!("x509 parsing failed: {:?}", res),
 /// # }
 /// # }
@@ -81,29 +81,68 @@ impl<'a> X509Certificate<'a> {
     /// Not all algorithms are supported, this function is limited to what `ring` supports.
     #[cfg(feature = "verify")]
     #[cfg_attr(docsrs, doc(cfg(feature = "verify")))]
-    pub fn verify_signature(
-        &self,
-        public_key: Option<&SubjectPublicKeyInfo>,
-    ) -> Result<(), X509Error> {
+    pub fn verify_signature(&self, public_key: Option<&SubjectPublicKeyInfo>) -> Result<(), X509Error> {
         use ring::signature;
         let spki = public_key.unwrap_or_else(|| self.public_key());
         let signature_alg = &self.signature_algorithm.algorithm;
         // identify verification algorithm
         let verification_alg: &dyn signature::VerificationAlgorithm =
             if *signature_alg == OID_PKCS1_SHA1WITHRSA || *signature_alg == OID_SHA1_WITH_RSA {
-                &signature::RSA_PKCS1_1024_8192_SHA1_FOR_LEGACY_USE_ONLY
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    &signature::RSA_PKCS1_1024_8192_SHA1_FOR_LEGACY_USE_ONLY
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    &signature::RSA_PKCS1_1024_8192_SHA1_FOR_LEGACY_USE_ONLY
+                }
             } else if *signature_alg == OID_PKCS1_SHA256WITHRSA {
-                &signature::RSA_PKCS1_2048_8192_SHA256
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    &signature::RSA_PKCS1_2048_8192_SHA256
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    &signature::RSA_PKCS1_2048_8192_SHA256
+                }
             } else if *signature_alg == OID_PKCS1_SHA384WITHRSA {
-                &signature::RSA_PKCS1_2048_8192_SHA384
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    &signature::RSA_PKCS1_2048_8192_SHA384
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    return Err(X509Error::SignatureUnsupportedAlgorithm);
+                }
             } else if *signature_alg == OID_PKCS1_SHA512WITHRSA {
-                &signature::RSA_PKCS1_2048_8192_SHA512
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    &signature::RSA_PKCS1_2048_8192_SHA512
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    return Err(X509Error::SignatureUnsupportedAlgorithm);
+                }
             } else if *signature_alg == OID_SIG_ECDSA_WITH_SHA256 {
-                self.get_ec_curve_sha(&spki.algorithm, 256)
-                    .ok_or(X509Error::SignatureUnsupportedAlgorithm)?
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    self.get_ec_curve_sha(&spki.algorithm, 256)
+                        .ok_or(X509Error::SignatureUnsupportedAlgorithm)?
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    return Err(X509Error::SignatureUnsupportedAlgorithm);
+                }
             } else if *signature_alg == OID_SIG_ECDSA_WITH_SHA384 {
-                self.get_ec_curve_sha(&spki.algorithm, 384)
-                    .ok_or(X509Error::SignatureUnsupportedAlgorithm)?
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    self.get_ec_curve_sha(&spki.algorithm, 384)
+                        .ok_or(X509Error::SignatureUnsupportedAlgorithm)?
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    return Err(X509Error::SignatureUnsupportedAlgorithm);
+                }
             } else if *signature_alg == OID_SIG_ED25519 {
                 &signature::ED25519
             } else {
@@ -121,14 +160,10 @@ impl<'a> X509Certificate<'a> {
     ///
     /// Not all algorithms are supported, we are limited to what `ring` supports.
     #[cfg(feature = "verify")]
-    fn get_ec_curve_sha(
-        &self,
-        pubkey_alg: &AlgorithmIdentifier,
-        sha_len: usize,
-    ) -> Option<&'static dyn ring::signature::VerificationAlgorithm> {
+    #[cfg(not(target_family = "wasm"))]
+    fn get_ec_curve_sha(&self, pubkey_alg: &AlgorithmIdentifier, sha_len: usize) -> Option<&'static dyn ring::signature::VerificationAlgorithm> {
         use ring::signature;
         let curve_oid = pubkey_alg.parameters.as_ref()?.as_oid().ok()?;
-        // let curve_oid = pubkey_alg.parameters.as_ref()?.as_oid().ok()?;
         if curve_oid == OID_EC_P256 {
             match sha_len {
                 256 => Some(&signature::ECDSA_P256_SHA256_ASN1),
@@ -187,7 +222,7 @@ impl<'a> FromDer<'a, X509Error> for X509Certificate<'a> {
     ///         let issuer = x509.issuer();
     ///         println!("X.509 Subject: {}", subject);
     ///         println!("X.509 Issuer: {}", issuer);
-    ///     },
+    ///     }
     ///     _ => panic!("x509 parsing failed: {:?}", res),
     /// }
     /// # }
@@ -229,7 +264,7 @@ impl<'a> FromDer<'a, X509Error> for X509Certificate<'a> {
 ///         let issuer = x509.issuer();
 ///         println!("X.509 Subject: {}", subject);
 ///         println!("X.509 Issuer: {}", issuer);
-///     },
+///     }
 ///     _ => panic!("x509 parsing failed: {:?}", res),
 /// }
 /// # }
@@ -280,9 +315,9 @@ impl<'a> Parser<&'a [u8], X509Certificate<'a>, X509Error> for X509CertificatePar
 #[cfg_attr(docsrs, doc(cfg(feature = "validate")))]
 impl Validate for X509Certificate<'_> {
     fn validate<W, E>(&self, warn: W, err: E) -> bool
-    where
-        W: FnMut(&str),
-        E: FnMut(&str),
+        where
+            W: FnMut(&str),
+            E: FnMut(&str),
     {
         X509StructureValidator.validate(self, &mut CallbackLogger::new(warn, err))
     }
@@ -364,7 +399,7 @@ impl<'a> TbsCertificate<'a> {
 
     /// Returns an iterator over the certificate extensions
     #[inline]
-    pub fn iter_extensions(&self) -> impl Iterator<Item = &X509Extension<'a>> {
+    pub fn iter_extensions(&self) -> impl Iterator<Item=&X509Extension<'a>> {
         self.extensions.iter()
     }
 
@@ -389,8 +424,8 @@ impl<'a> TbsCertificate<'a> {
     /// The [`get_extension_unique`](Self::get_extension_unique) method checks for duplicate extensions and should be
     /// preferred.
     #[deprecated(
-        since = "0.13.0",
-        note = "Do not use this function (duplicate extensions are not checked), use `get_extension_unique`"
+    since = "0.13.0",
+    note = "Do not use this function (duplicate extensions are not checked), use `get_extension_unique`"
     )]
     pub fn find_extension(&self, oid: &Oid) -> Option<&X509Extension<'a>> {
         self.extensions.iter().find(|&ext| ext.oid == *oid)
@@ -699,9 +734,9 @@ impl<'a> Parser<&'a [u8], TbsCertificate<'a>, X509Error> for TbsCertificateParse
 #[cfg_attr(docsrs, doc(cfg(feature = "validate")))]
 impl Validate for TbsCertificate<'_> {
     fn validate<W, E>(&self, warn: W, err: E) -> bool
-    where
-        W: FnMut(&str),
-        E: FnMut(&str),
+        where
+            W: FnMut(&str),
+            E: FnMut(&str),
     {
         TbsCertificateStructureValidator.validate(self, &mut CallbackLogger::new(warn, err))
     }
@@ -745,7 +780,9 @@ impl Validity {
     /// Check the certificate time validity for the provided date/time
     #[inline]
     pub fn is_valid_at(&self, time: ASN1Time) -> bool {
-        time >= self.not_before && time <= self.not_after
+        let is_after_nbf = time.0 - self.not_before.0 >= Duration::min_value();
+        let is_before_naf = self.not_after.0 - time.0 >= Duration::min_value();
+        is_after_nbf && is_before_naf
     }
 
     /// Check the certificate time validity
@@ -806,23 +843,27 @@ impl<'a> UniqueIdentifier<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wasm_bindgen_test::*;
+    wasm_bindgen_test_configure!(run_in_browser);
 
     #[test]
+    #[wasm_bindgen_test]
     fn check_validity_expiration() {
         let mut v = Validity {
             not_before: ASN1Time::now(),
             not_after: ASN1Time::now(),
         };
         assert_eq!(v.time_to_expiration(), None);
-        v.not_after = (v.not_after + Duration::new(60, 0)).unwrap();
+        v.not_after = (v.not_after + Duration::seconds(60)).unwrap();
         assert!(v.time_to_expiration().is_some());
-        assert!(v.time_to_expiration().unwrap() <= Duration::new(60, 0));
+        assert!(v.time_to_expiration().unwrap() <= Duration::seconds(60));
         // The following assumes this timing won't take 10 seconds... I
         // think that is safe.
-        assert!(v.time_to_expiration().unwrap() > Duration::new(50, 0));
+        assert!(v.time_to_expiration().unwrap() > Duration::seconds(50));
     }
 
     #[test]
+    #[wasm_bindgen_test]
     fn extension_duplication() {
         let extensions = vec![
             X509Extension::new(oid! {1.2}, true, &[], ParsedExtension::Unparsed),
