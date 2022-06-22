@@ -57,9 +57,9 @@ fn read_csr_with_san() {
     }
 }
 
-// TODO: 21/06/2022  
-/*#[test]
-#[wasm_bindgen_test]
+// TODO: does not work in WASM for any signature alg except ed25519...but we don't need anything else ATM
+// #[wasm_bindgen_test]
+#[test]
 #[cfg(feature = "verify")]
 fn read_csr_verify() {
     let der = pem::parse_x509_pem(CSR_DATA).unwrap().1;
@@ -75,4 +75,4 @@ fn read_csr_verify() {
 
     let (_, csr) = X509CertificationRequest::from_der(&der.contents).expect("could not parse CSR");
     csr.verify_signature().unwrap_err();
-}*/
+}

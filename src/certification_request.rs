@@ -24,7 +24,7 @@ pub struct X509CertificationRequest<'a> {
 }
 
 impl<'a> X509CertificationRequest<'a> {
-    pub fn requested_extensions(&self) -> Option<impl Iterator<Item = &ParsedExtension>> {
+    pub fn requested_extensions(&self) -> Option<impl Iterator<Item=&ParsedExtension>> {
         self.certification_request_info.iter_attributes().find_map(|attr| {
             if let ParsedCriAttribute::ExtensionRequest(requested) = &attr.parsed_attribute {
                 Some(requested.extensions.iter().map(|ext| &ext.parsed_extension))
@@ -170,7 +170,7 @@ impl<'a> X509CertificationRequestInfo<'a> {
 
     /// Returns an iterator over the CRL entry extensions
     #[inline]
-    pub fn iter_attributes(&self) -> impl Iterator<Item = &X509CriAttribute> {
+    pub fn iter_attributes(&self) -> impl Iterator<Item=&X509CriAttribute> {
         self.attributes.iter()
     }
 

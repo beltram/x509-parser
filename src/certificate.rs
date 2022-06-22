@@ -88,41 +88,13 @@ impl<'a> X509Certificate<'a> {
         // identify verification algorithm
         let verification_alg: &dyn signature::VerificationAlgorithm =
             if *signature_alg == OID_PKCS1_SHA1WITHRSA || *signature_alg == OID_SHA1_WITH_RSA {
-                #[cfg(not(target_family = "wasm"))]
-                {
-                    &signature::RSA_PKCS1_1024_8192_SHA1_FOR_LEGACY_USE_ONLY
-                }
-                #[cfg(target_family = "wasm")]
-                {
-                    &signature::RSA_PKCS1_1024_8192_SHA1_FOR_LEGACY_USE_ONLY
-                }
+                &signature::RSA_PKCS1_1024_8192_SHA1_FOR_LEGACY_USE_ONLY
             } else if *signature_alg == OID_PKCS1_SHA256WITHRSA {
-                #[cfg(not(target_family = "wasm"))]
-                {
-                    &signature::RSA_PKCS1_2048_8192_SHA256
-                }
-                #[cfg(target_family = "wasm")]
-                {
-                    &signature::RSA_PKCS1_2048_8192_SHA256
-                }
+                &signature::RSA_PKCS1_2048_8192_SHA256
             } else if *signature_alg == OID_PKCS1_SHA384WITHRSA {
-                #[cfg(not(target_family = "wasm"))]
-                {
-                    &signature::RSA_PKCS1_2048_8192_SHA384
-                }
-                #[cfg(target_family = "wasm")]
-                {
-                    return Err(X509Error::SignatureUnsupportedAlgorithm);
-                }
+                &signature::RSA_PKCS1_2048_8192_SHA384
             } else if *signature_alg == OID_PKCS1_SHA512WITHRSA {
-                #[cfg(not(target_family = "wasm"))]
-                {
-                    &signature::RSA_PKCS1_2048_8192_SHA512
-                }
-                #[cfg(target_family = "wasm")]
-                {
-                    return Err(X509Error::SignatureUnsupportedAlgorithm);
-                }
+                &signature::RSA_PKCS1_2048_8192_SHA512
             } else if *signature_alg == OID_SIG_ECDSA_WITH_SHA256 {
                 #[cfg(not(target_family = "wasm"))]
                 {
